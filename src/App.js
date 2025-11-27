@@ -54,6 +54,8 @@ export default function App() {
   const [teamList, setTeamList] = useState([]);
   const [showModal, setShowModal] = useState(false);
 
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
+
   const [editingCoin, setEditingCoin] = useState(null);
 
   // Load players + teams
@@ -72,12 +74,10 @@ export default function App() {
         setPlayers(loaded);
       }
     }
-
     async function loadTeams() {
       const snap = await getDocs(collection(db, "teams"));
       if (!snap.empty) setTeamList(snap.docs.map((d) => d.data()));
     }
-
     loadPlayers();
     loadTeams();
   }, []);
@@ -85,14 +85,19 @@ export default function App() {
   function toggleAdmin() {
     if (adminMode) {
       setAdminMode(false);
-      alert("관리자 모드 종료");
       return;
     }
     const pw = prompt("관리자 비밀번호:");
     if (pw === "150817") {
       setAdminMode(true);
-      alert("관리자 모드 활성화");
     } else alert("비밀번호 오류");
+  }
+
+  async function uploadInitialPlayers() {
+    for (let p of initialPlayers) {
+      await setDoc(doc(db, "players", p.name), { ...p, trend: [] });
+    }
+    alert("초기 데이터 업로드 완료!");
   }
 
   const toggleSelect = (name) => {
@@ -155,43 +160,43 @@ export default function App() {
 
   const isOver = totalUsed > limit;
 
-  // Invisible Hand Algorithm (3-game rolling trend)
+  // invisible hand
   async function applyInvisibleHand(selectedNames) {
-    const updatedPlayers = players.map((p) => {
+    const updated = players.map((p) => {
       const wasPicked = selectedNames.includes(p.name);
-      const prevTrend = p.trend || [];
-      const newTrend = [...prevTrend, wasPicked ? 1 : 0];
+      const newTrend = [...(p.trend || []), wasPicked ? 1 : 0];
 
       while (newTrend.length > 3) newTrend.shift();
 
-      const picks = newTrend.reduce((a, b) => a + b, 0);
+      const picksIn3 = newTrend.reduce((a, b) => a + b, 0);
       let delta = 0;
-
-      if (picks === 0) delta = -1;
-      else if (picks === 1) delta = 0;
-      else if (picks === 2) delta = 1;
-      else if (picks === 3) delta = 2;
+      if (picksIn3 === 0) delta = -1;
+      else if (picksIn3 === 2) delta = 1;
+      else if (picksIn3 === 3) delta = 2;
 
       let newCoin = p.coin + delta;
       if (newCoin < 0) newCoin = 0;
       if (newCoin > 100) newCoin = 100;
 
-      const newHistory = [...(p.history || []), newCoin];
-
-      return { ...p, coin: newCoin, history: newHistory, trend: newTrend };
+      return {
+        ...p,
+        coin: newCoin,
+        trend: newTrend,
+        history: [...p.history, newCoin],
+      };
     });
 
     await Promise.all(
-      updatedPlayers.map((p) =>
+      updated.map((p) =>
         updateDoc(doc(db, "players", p.name), {
           coin: p.coin,
-          history: p.history,
           trend: p.trend,
+          history: p.history,
         })
       )
     );
 
-    setPlayers(updatedPlayers);
+    setPlayers(updated);
   }
 
   async function saveTeam() {
@@ -201,26 +206,26 @@ export default function App() {
     }
 
     if (totalUsed > limit) {
-      alert("총 사용 점수가 제한을 초과했습니다.");
+      alert("총 사용 점수 초과! 팀 확정 불가");
       return;
     }
 
-    const teamName = prompt("팀 이름:");
+    const teamName = prompt("팀 이름 입력:");
     if (!teamName) return;
 
     const creator = prompt("작성자 이름:") || "익명";
 
-    const snapshot = selected.map((name) => {
+    const snapshotPlayers = selected.map((name) => {
       const p = players.find((x) => x.name === name);
       return { name: p.name, coin: p.coin };
     });
 
-    const totalScore = snapshot.reduce((s, x) => s + x.coin, 0);
+    const totalScore = snapshotPlayers.reduce((s, x) => s + x.coin, 0);
 
     await addDoc(collection(db, "teams"), {
       teamName,
       creator,
-      players: snapshot,
+      players: snapshotPlayers,
       total: totalScore,
       createdAt: serverTimestamp(),
     });
@@ -231,8 +236,6 @@ export default function App() {
     await applyInvisibleHand(selected);
 
     setSelected([]);
-
-    alert("팀 저장 + 보이지 않는 손 적용 완료!");
   }
 
   let filtered =
@@ -241,21 +244,14 @@ export default function App() {
       : players.filter((p) => p.pos.includes(filterPos));
 
   let sortedPlayers = filtered.sort((a, b) => {
-    switch (sortType) {
-      case "name-asc":
-        return a.name.localeCompare(b.name);
-      case "coin-asc":
-        return a.coin - b.coin;
-      case "coin-desc":
-        return b.coin - a.coin;
-      default:
-        return 0;
-    }
+    if (sortType === "name-asc") return a.name.localeCompare(b.name);
+    if (sortType === "coin-asc") return a.coin - b.coin;
+    return b.coin - a.coin;
   });
 
   return (
     <div style={{ padding: 20, maxWidth: 750, margin: "0 auto" }}>
-      {/* 관리자 버튼 — fixed 제거 */}
+      {/* 관리자 버튼 (고정 안됨) */}
       <button
         onClick={toggleAdmin}
         style={{
@@ -264,27 +260,80 @@ export default function App() {
           color: "white",
           borderRadius: 6,
           fontSize: 12,
-          marginBottom: 10,
         }}
       >
         {adminMode ? "관리자 ON" : "관리자"}
       </button>
 
+      {/* 공사중 모드 */}
+      {adminMode && (
+        <button
+          onClick={() => setMaintenanceMode(!maintenanceMode)}
+          style={{
+            marginLeft: 10,
+            padding: "6px 10px",
+            background: maintenanceMode ? "red" : "#555",
+            color: "white",
+            borderRadius: 6,
+            fontSize: 12,
+          }}
+        >
+          {maintenanceMode ? "공사중 해제" : "공사중 모드"}
+        </button>
+      )}
+
+      {/* 공사중 화면 (관리자는 통과) */}
+      {maintenanceMode && !adminMode && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.85)",
+            color: "white",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            zIndex: 99999,
+            flexDirection: "column",
+            fontSize: 30,
+            fontWeight: "bold",
+          }}
+        >
+          공사중입니다🔧
+          <br />
+          잠시 후 다시 이용해주세요
+        </div>
+      )}
+
       <h1 style={{ fontSize: 28, fontWeight: "bold", marginBottom: 20 }}>
         RAON 드래프트 시스템
       </h1>
 
-      {/* 선택된 선수 섹션 */}
+      {adminMode && (
+        <button
+          onClick={uploadInitialPlayers}
+          style={{
+            padding: 10,
+            background: "orange",
+            borderRadius: 8,
+            marginBottom: 20,
+          }}
+        >
+          초기 선수 업로드
+        </button>
+      )}
+
+      {/* 선택된 선수 */}
       <div
         style={{
-          position: "sticky",
-          top: 20,
           background: "white",
           padding: 16,
           borderRadius: 10,
           marginBottom: 20,
           boxShadow: "0 2px 6px rgba(0,0,0,0.25)",
-          zIndex: 999,
         }}
       >
         <div style={{ fontSize: 18, fontWeight: "bold" }}>
@@ -292,32 +341,24 @@ export default function App() {
         </div>
 
         {selected.length === 0 && (
-          <div style={{ marginTop: 4, fontSize: 13, opacity: 0.7 }}>
-            선수를 선택하면 여기에 표시됩니다.
-          </div>
+          <div style={{ marginTop: 4, opacity: 0.7 }}>선수 없음</div>
         )}
 
         {selected.map((name) => {
           const p = players.find((x) => x.name === name);
           if (!p) return null;
-
-          const posStr = p.pos.join(",");
-
           return (
             <div
               key={name}
               style={{
-                marginTop: 6,
+                marginTop: 4,
                 display: "flex",
-                alignItems: "center",
                 justifyContent: "space-between",
               }}
             >
               <div>
-                {p.name} <b>({posStr})</b> — <b>{p.coin}</b>점
+                {p.name} ({p.pos.join("/")}) — <b>{p.coin}</b>점
               </div>
-
-              {/* 빨간 마이너스 제거 버튼 */}
               <button
                 onClick={() => toggleSelect(name)}
                 style={{
@@ -326,7 +367,6 @@ export default function App() {
                   background: "red",
                   color: "white",
                   borderRadius: 4,
-                  border: "none",
                   fontWeight: "bold",
                   fontSize: 14,
                   cursor: "pointer",
@@ -341,16 +381,10 @@ export default function App() {
         <hr style={{ margin: "12px 0" }} />
 
         <div
-          style={{
-            fontSize: 20,
-            fontWeight: "bold",
-            color: isOver ? "red" : "black",
-          }}
+          style={{ fontSize: 20, fontWeight: "bold", color: isOver ? "red" : "black" }}
         >
           현재 점수: {totalUsed} / {limit}
-          {isOver && (
-            <span style={{ marginLeft: 10, color: "red" }}>(초과!)</span>
-          )}
+          {isOver && <span style={{ marginLeft: 10 }}>(초과!)</span>}
           <button
             onClick={saveTeam}
             style={{
@@ -379,21 +413,15 @@ export default function App() {
       </div>
 
       {/* 점수 제한 */}
-      <div
-        style={{
-          background: "#fff",
-          padding: 16,
-          borderRadius: 10,
-          marginBottom: 20,
-        }}
-      >
+      <div style={{ background: "#fff", padding: 16, borderRadius: 10, marginBottom: 20 }}>
         총 사용 가능 점수
         <br />
         <input
           type="number"
           value={limit}
           onChange={(e) => setLimit(Number(e.target.value))}
-          style={{ padding: 6, width: 120, marginTop: 6 }}
+          disabled={!adminMode}
+          style={{ padding: 6, width: 120, marginTop: 6, fontWeight: "bold" }}
         />
       </div>
 
@@ -439,11 +467,7 @@ export default function App() {
         {sortedPlayers.map((p) => (
           <div
             key={p.name}
-            style={{
-              background: "#f3f3f3",
-              padding: 12,
-              borderRadius: 10,
-            }}
+            style={{ background: "#f3f3f3", padding: 12, borderRadius: 10 }}
           >
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <span style={{ fontWeight: "bold" }}>{p.name}</span>
@@ -455,7 +479,6 @@ export default function App() {
               />
             </div>
 
-            {/* 점수 입력 — 크고 굵게 */}
             <div style={{ marginTop: 8 }}>
               점수:{" "}
               <input
@@ -467,19 +490,17 @@ export default function App() {
                 onChange={(e) => handleCoinChange(p.name, e.target.value)}
                 style={{
                   width: 80,
-                  padding: 6,
-                  fontSize: 20,
+                  padding: 4,
+                  fontSize: 18,
                   fontWeight: "bold",
                 }}
               />
             </div>
 
-            {/* 최근 변동 기록 */}
             <div style={{ fontSize: 12, marginTop: 6, opacity: 0.7 }}>
               최근 변동(10개): {(p.history || []).slice(-10).join(", ")}
             </div>
 
-            {/* 등락 그래프 */}
             <div style={{ display: "flex", height: 20, marginTop: 6 }}>
               {(p.history || []).map((v, i) => {
                 const prev = i === 0 ? v : p.history[i - 1];
@@ -499,7 +520,6 @@ export default function App() {
               })}
             </div>
 
-            {/* 포지션 */}
             <div style={{ marginTop: 10 }}>
               {positions.map((pos) => (
                 <label key={pos} style={{ marginRight: 8 }}>
@@ -588,19 +608,21 @@ export default function App() {
                 }, 0);
 
                 const originalTotal = t.total || 0;
-                const impossible = currentTotal > limit;
+                const isImpossible = currentTotal > limit;
 
                 return (
                   <div
                     key={idx}
                     style={{
-                      background: impossible ? "#ffe5e5" : "#f3f3f3",
+                      background: isImpossible ? "#ffe5e5" : "#f3f3f3",
                       padding: 10,
                       borderRadius: 8,
-                      border: impossible ? "1px solid red" : "none",
+                      border: isImpossible ? "1px solid red" : "none",
                     }}
                   >
-                    <div style={{ fontWeight: "bold" }}>팀명: {t.teamName}</div>
+                    <div style={{ fontWeight: "bold", marginBottom: 4 }}>
+                      팀명: {t.teamName}
+                    </div>
 
                     {adminMode && (
                       <div style={{ fontSize: 12, color: "gray" }}>
@@ -613,13 +635,13 @@ export default function App() {
                       <ul style={{ margin: 0, paddingLeft: 18 }}>
                         {t.players.map((tp, i) => {
                           const cur = players.find((p) => p.name === tp.name);
-                          const curCoin = cur ? cur.coin : tp.coin;
-                          const changed = cur && cur.coin !== tp.coin;
-
+                          const curCoin = cur ? cur.coin : null;
+                          const changed =
+                            curCoin !== null && curCoin !== tp.coin;
                           return (
                             <li key={i}>
-                              {tp.name}
-                              {!changed && <span> ({tp.coin}점)</span>}
+                              {tp.name}{" "}
+                              {!changed && <span>({tp.coin}점)</span>}
                               {changed && (
                                 <span>
                                   ({tp.coin}점 → <b>{curCoin}점</b>)
@@ -631,24 +653,26 @@ export default function App() {
                       </ul>
                     </div>
 
-                    <div style={{ marginTop: 6 }}>
-                      저장 당시 총점: <b>{originalTotal}</b>
+                    <div style={{ marginTop: 6, fontSize: 13 }}>
+                      저장 당시 총점: <b>{originalTotal}</b>점
                       <br />
                       현재 기준 총점:{" "}
-                      <b style={{ color: impossible ? "red" : "black" }}>
+                      <b style={{ color: isImpossible ? "red" : "black" }}>
                         {currentTotal}
                       </b>
+                      점
                     </div>
 
-                    {impossible && (
+                    {isImpossible && (
                       <div
                         style={{
                           marginTop: 4,
+                          fontSize: 12,
                           color: "red",
                           fontWeight: "bold",
                         }}
                       >
-                        현재 기준으로는 존재 불가능한 팀
+                        현재 가격 기준으로는 존재 불가능한 팀
                       </div>
                     )}
                   </div>
