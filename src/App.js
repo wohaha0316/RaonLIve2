@@ -60,7 +60,17 @@ export default function App() {
   useEffect(() => {
     async function loadPlayers() {
       const snap = await getDocs(collection(db, "players"));
-      if (!snap.empty) setPlayers(snap.docs.map((d) => d.data()));
+      if (!snap.empty) {
+        const loaded = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            ...data,
+            history: data.history || [data.coin],
+            trend: data.trend || [], // 최근 3회 픽 여부 배열
+          };
+        });
+        setPlayers(loaded);
+      }
     }
     async function loadTeams() {
       const snap = await getDocs(collection(db, "teams"));
@@ -85,7 +95,10 @@ export default function App() {
 
   async function uploadInitialPlayers() {
     for (let p of initialPlayers) {
-      await setDoc(doc(db, "players", p.name), p);
+      await setDoc(doc(db, "players", p.name), {
+        ...p,
+        trend: [], // 초기 trend는 빈 배열
+      });
     }
     alert("초기 데이터 업로드 완료!");
   }
@@ -149,14 +162,73 @@ export default function App() {
   }, 0);
   const isOver = totalUsed > limit;
 
+  // 보이지 않는 손: 최근 3회 기준으로 점수 조정
+  async function applyInvisibleHand(selectedNames) {
+    // selectedNames: 이번 팀에서 뽑힌 선수 이름 배열
+    const updatedPlayers = players.map((p) => {
+      const wasPicked = selectedNames.includes(p.name);
+      const prevTrend = p.trend || [];
+      const newTrend = [...prevTrend, wasPicked ? 1 : 0];
+      // 최근 3개만 유지
+      while (newTrend.length > 3) {
+        newTrend.shift();
+      }
+
+      const picksIn3 = newTrend.reduce((sum, v) => sum + v, 0);
+      let delta = 0;
+
+      // 0픽 → -1, 1픽 → 0, 2픽 → +1, 3픽 → +2
+      if (picksIn3 === 0) delta = -1;
+      else if (picksIn3 === 1) delta = 0;
+      else if (picksIn3 === 2) delta = 1;
+      else if (picksIn3 === 3) delta = 2;
+
+      let newCoin = p.coin + delta;
+      // 0 ~ 100 사이로 클램프
+      if (newCoin < 0) newCoin = 0;
+      if (newCoin > 100) newCoin = 100;
+
+      const newHistory = [...(p.history || []), newCoin];
+
+      return {
+        ...p,
+        coin: newCoin,
+        history: newHistory,
+        trend: newTrend,
+      };
+    });
+
+    // Firestore에 반영
+    await Promise.all(
+      updatedPlayers.map((p) =>
+        updateDoc(doc(db, "players", p.name), {
+          coin: p.coin,
+          history: p.history,
+          trend: p.trend,
+        })
+      )
+    );
+
+    setPlayers(updatedPlayers);
+  }
+
   async function saveTeam() {
     if (selected.length === 0) {
       alert("선수를 선택하세요!");
       return;
     }
 
+    // ✅ 총점 초과 시 저장 막기
+    if (totalUsed > limit) {
+      alert("총 사용 점수가 제한을 초과했습니다. 팀을 확정할 수 없습니다.");
+      return;
+    }
+
     const teamName = prompt("팀 이름 입력:");
-    if (!teamName) return alert("팀 이름 필요함");
+    if (!teamName) {
+      alert("팀 이름 필요함");
+      return;
+    }
 
     const creator = prompt("작성자 이름 (관리자만 확인 가능):") || "익명";
 
@@ -178,10 +250,13 @@ export default function App() {
     const snap = await getDocs(collection(db, "teams"));
     setTeamList(snap.docs.map((d) => d.data()));
 
+    // ✅ 보이지 않는 손 발동 (최근 3회 기준 점수 조정)
+    await applyInvisibleHand(selected);
+
     // ✅ 팀 저장 후 선택 선수 초기화
     setSelected([]);
 
-    alert("팀 저장 완료!");
+    alert("팀 저장 + 보이지 않는 손 적용 완료!");
   }
 
   let filtered =
@@ -279,7 +354,7 @@ export default function App() {
               <div>
                 {p.name} — <b>{p.coin}</b>점
               </div>
-              {/* ✅ 상단에서 바로 제거 버튼 */}
+              {/* 상단에서 바로 제거 버튼 */}
               <button
                 onClick={() => toggleSelect(name)}
                 style={{
