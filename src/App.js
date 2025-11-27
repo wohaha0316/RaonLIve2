@@ -110,7 +110,9 @@ export default function App() {
     if (!adminMode) return;
 
     const target = players.find((p) => p.name === name);
-    const newHistory = [...target.history, target.coin];
+    if (!target) return;
+
+    const newHistory = [...(target.history || []), target.coin];
 
     await updateDoc(doc(db, "players", name), {
       coin: target.coin,
@@ -128,6 +130,8 @@ export default function App() {
     if (!adminMode) return;
 
     const p = players.find((x) => x.name === name);
+    if (!p) return;
+
     const newPos = p.pos.includes(pos)
       ? p.pos.filter((x) => x !== pos)
       : [...p.pos, pos];
@@ -174,6 +178,9 @@ export default function App() {
     const snap = await getDocs(collection(db, "teams"));
     setTeamList(snap.docs.map((d) => d.data()));
 
+    // ✅ 팀 저장 후 선택 선수 초기화
+    setSelected([]);
+
     alert("팀 저장 완료!");
   }
 
@@ -197,7 +204,7 @@ export default function App() {
 
   return (
     <div style={{ padding: 20, maxWidth: 750, margin: "0 auto" }}>
-      {/* 🔥 관리자 버튼 상단 고정 */}
+      {/* 관리자 버튼 상단 고정 */}
       <button
         onClick={toggleAdmin}
         style={{
@@ -250,11 +257,42 @@ export default function App() {
           선택된 선수 ({selected.length}명)
         </div>
 
+        {selected.length === 0 && (
+          <div style={{ marginTop: 4, fontSize: 13, opacity: 0.7 }}>
+            선수를 선택하면 여기 표시됩니다.
+          </div>
+        )}
+
         {selected.map((name) => {
           const p = players.find((x) => x.name === name);
+          if (!p) return null;
           return (
-            <div key={name} style={{ marginTop: 4 }}>
-              {p.name} — <b>{p.coin}</b>점
+            <div
+              key={name}
+              style={{
+                marginTop: 4,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <div>
+                {p.name} — <b>{p.coin}</b>점
+              </div>
+              {/* ✅ 상단에서 바로 제거 버튼 */}
+              <button
+                onClick={() => toggleSelect(name)}
+                style={{
+                  marginLeft: 8,
+                  padding: "2px 6px",
+                  background: "#ccc",
+                  borderRadius: 6,
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                -
+              </button>
             </div>
           );
         })}
@@ -391,12 +429,12 @@ export default function App() {
 
             {/* 최근 변동 기록 */}
             <div style={{ fontSize: 12, marginTop: 6, opacity: 0.7 }}>
-              최근 변동(10개): {p.history.slice(-10).join(", ")}
+              최근 변동(10개): {(p.history || []).slice(-10).join(", ")}
             </div>
 
             {/* 등락 그래프 */}
             <div style={{ display: "flex", height: 20, marginTop: 6 }}>
-              {p.history.map((v, i) => {
+              {(p.history || []).map((v, i) => {
                 const prev = i === 0 ? v : p.history[i - 1];
                 const up = v > prev;
                 const same = v === prev;
@@ -498,37 +536,88 @@ export default function App() {
                 marginTop: 10,
               }}
             >
-              {teamList.map((t, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    background: "#f3f3f3",
-                    padding: 10,
-                    borderRadius: 8,
-                  }}
-                >
-                  <div style={{ fontWeight: "bold" }}>팀명: {t.teamName}</div>
+              {teamList.map((t, idx) => {
+                // 현재 기준 총점 계산
+                const currentTotal = t.players.reduce((sum, tp) => {
+                  const cur = players.find((p) => p.name === tp.name);
+                  return sum + (cur ? cur.coin : tp.coin);
+                }, 0);
 
-                  {adminMode && (
-                    <div style={{ fontSize: 12, color: "gray" }}>
-                      작성자: {t.creator}
+                const originalTotal = t.total || 0;
+                const isImpossible = currentTotal > limit;
+
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      background: isImpossible ? "#ffe5e5" : "#f3f3f3",
+                      padding: 10,
+                      borderRadius: 8,
+                      border: isImpossible ? "1px solid red" : "none",
+                    }}
+                  >
+                    <div style={{ fontWeight: "bold", marginBottom: 4 }}>
+                      팀명: {t.teamName}
                     </div>
-                  )}
 
-                  <div style={{ marginTop: 4 }}>
-                    선수:
-                    <ul style={{ margin: 0, paddingLeft: 20 }}>
-                      {t.players.map((p, i) => (
-                        <li key={i}>
-                          {p.name} ({p.coin})
-                        </li>
-                      ))}
-                    </ul>
+                    {adminMode && (
+                      <div style={{ fontSize: 12, color: "gray" }}>
+                        작성자: {t.creator}
+                      </div>
+                    )}
+
+                    <div style={{ marginTop: 4, fontSize: 13 }}>
+                      선수:
+                      <ul style={{ margin: 0, paddingLeft: 18 }}>
+                        {t.players.map((tp, i) => {
+                          const cur = players.find((p) => p.name === tp.name);
+                          const curCoin = cur ? cur.coin : null;
+                          const changed =
+                            curCoin !== null && curCoin !== tp.coin;
+
+                          return (
+                            <li key={i}>
+                              {tp.name} {!changed && <span>({tp.coin}점)</span>}
+                              {changed && (
+                                <span>
+                                  ({tp.coin}점 → <b>{curCoin}점</b>)
+                                </span>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+
+                    <div style={{ marginTop: 6, fontSize: 13 }}>
+                      저장 당시 총점: <b>{originalTotal}</b>점
+                      <br />
+                      현재 기준 총점:{" "}
+                      <b
+                        style={{
+                          color: isImpossible ? "red" : "black",
+                        }}
+                      >
+                        {currentTotal}
+                      </b>
+                      점
+                    </div>
+
+                    {isImpossible && (
+                      <div
+                        style={{
+                          marginTop: 4,
+                          fontSize: 12,
+                          color: "red",
+                          fontWeight: "bold",
+                        }}
+                      >
+                        현재 가격 기준으로는 존재 불가능한 팀
+                      </div>
+                    )}
                   </div>
-
-                  <div>총점: {t.total}</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
