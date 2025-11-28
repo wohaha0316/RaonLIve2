@@ -1,5 +1,3 @@
-// 🔥 App.js 전체 코드 — 2025 최신 안정판
-
 import React, { useState, useEffect } from "react";
 import { db } from "./firebase";
 import {
@@ -61,7 +59,7 @@ export default function App() {
 
   const [editingCoin, setEditingCoin] = useState(null);
 
-  // 🔥 Firestore에서 공사중 모드 불러오기 + players/teams 불러오기
+  // 초기 로딩: 공사중 상태 + 선수/팀 불러오기
   useEffect(() => {
     async function loadMaintenance() {
       const ref = doc(db, "system", "settings");
@@ -97,7 +95,6 @@ export default function App() {
     loadTeams();
   }, []);
 
-  // 🔥 관리자 토글
   function toggleAdmin() {
     if (adminMode) {
       setAdminMode(false);
@@ -111,7 +108,7 @@ export default function App() {
     }
   }
 
-  // 🔥 공사중 모드 토글 + Firestore 저장
+  // 공사중 모드 토글 + DB 저장
   async function toggleMaintenance() {
     if (!adminMode) return;
 
@@ -123,7 +120,6 @@ export default function App() {
     });
   }
 
-  // 🔥 초기 선수 업로드
   async function uploadInitialPlayers() {
     for (let p of initialPlayers) {
       await setDoc(doc(db, "players", p.name), { ...p, trend: [] });
@@ -131,14 +127,12 @@ export default function App() {
     alert("초기 선수 업로드 완료!");
   }
 
-  // 🔥 선택 토글
   const toggleSelect = (name) => {
     setSelected((prev) =>
       prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]
     );
   };
 
-  // 🔥 점수 조정
   const handleCoinChange = (name, val) => {
     if (!adminMode) return;
     setEditingCoin(name);
@@ -155,7 +149,7 @@ export default function App() {
     const target = players.find((p) => p.name === name);
     if (!target) return;
 
-    const newHistory = [...target.history, target.coin];
+    const newHistory = [...(target.history || []), target.coin];
 
     await updateDoc(doc(db, "players", name), {
       coin: target.coin,
@@ -169,7 +163,6 @@ export default function App() {
     setEditingCoin(null);
   };
 
-  // 🔥 포지션 변경
   const togglePosition = (name, pos) => {
     if (!adminMode) return;
 
@@ -187,7 +180,6 @@ export default function App() {
     updateDoc(doc(db, "players", name), { pos: newPos });
   };
 
-  // 🔥 현재 선택된 점수
   const totalUsed = selected.reduce((s, n) => {
     const p = players.find((x) => x.name === n);
     return s + (p?.coin || 0);
@@ -195,20 +187,20 @@ export default function App() {
 
   const isOver = totalUsed > limit;
 
-  // 🔥 보이지 않는 손
+  // 보이지 않는 손
   async function applyInvisibleHand(selectedNames) {
     const updated = players.map((p) => {
       const wasPicked = selectedNames.includes(p.name);
 
-      const newTrend = [...p.trend, wasPicked ? 1 : 0];
+      const newTrend = [...(p.trend || []), wasPicked ? 1 : 0];
       while (newTrend.length > 3) newTrend.shift();
 
-      const picks = newTrend.reduce((a, b) => a + b, 0);
+      const picksIn3 = newTrend.reduce((a, b) => a + b, 0);
 
       let delta = 0;
-      if (picks === 0) delta = -1;
-      else if (picks === 2) delta = 1;
-      else if (picks === 3) delta = 2;
+      if (picksIn3 === 0) delta = -1;
+      else if (picksIn3 === 2) delta = 1;
+      else if (picksIn3 === 3) delta = 2;
 
       let newCoin = p.coin + delta;
       if (newCoin < 0) newCoin = 0;
@@ -218,7 +210,7 @@ export default function App() {
         ...p,
         coin: newCoin,
         trend: newTrend,
-        history: [...p.history, newCoin],
+        history: [...(p.history || []), newCoin],
       };
     });
 
@@ -235,15 +227,14 @@ export default function App() {
     setPlayers(updated);
   }
 
-  // 🔥 팀 저장
   async function saveTeam() {
     if (selected.length === 0) {
-      alert("선수 없음!");
+      alert("선수를 선택하세요!");
       return;
     }
 
     if (totalUsed > limit) {
-      alert("총 사용 점수 초과!");
+      alert("총 사용 점수 초과! 팀 확정 불가");
       return;
     }
 
@@ -275,7 +266,6 @@ export default function App() {
     setSelected([]);
   }
 
-  // 🔥 정렬/필터
   let filtered =
     filterPos === "ALL"
       ? [...players]
@@ -287,7 +277,7 @@ export default function App() {
     return b.coin - a.coin;
   });
 
-  // 🔥 공사중 모드 화면 차단
+  // 공사중 모드 + 관리자 아님 → 전체 가리되, 관리자 버튼은 살려둠
   if (maintenanceMode && !adminMode) {
     return (
       <div
@@ -302,17 +292,36 @@ export default function App() {
           flexDirection: "column",
           fontSize: 40,
           fontWeight: "bold",
+          position: "relative",
         }}
       >
-        RAON 화이팅! 🔥💪
+        {/* 공사중이어도 항상 보이는 관리자 버튼 */}
+        <button
+          onClick={toggleAdmin}
+          style={{
+            position: "absolute",
+            top: 20,
+            left: 20,
+            padding: "6px 10px",
+            background: "black",
+            color: "white",
+            borderRadius: 6,
+            border: "2px solid white",
+            fontSize: 12,
+            cursor: "pointer",
+          }}
+        >
+          관리자
+        </button>
+        RAON 화이팅! 💪🔥
       </div>
     );
   }
 
-  // 🔥 정상 화면
+  // 정상 화면
   return (
     <div style={{ padding: 20, maxWidth: 750, margin: "0 auto" }}>
-      {/* 관리자 버튼 */}
+      {/* 관리자 버튼 (스크롤 따라가지 않음, 그냥 상단에 고정 렌더만) */}
       <button
         onClick={toggleAdmin}
         style={{
@@ -327,7 +336,7 @@ export default function App() {
         {adminMode ? "관리자 ON" : "관리자"}
       </button>
 
-      {/* 공사중 버튼 */}
+      {/* 공사중 토글 버튼 (관리자만) */}
       {adminMode && (
         <button
           onClick={toggleMaintenance}
@@ -362,7 +371,7 @@ export default function App() {
         </button>
       )}
 
-      {/* 선택된 선수 - sticky */}
+      {/* 선택된 선수 - 다시 상단 sticky 고정 */}
       <div
         style={{
           background: "white",
@@ -387,6 +396,7 @@ export default function App() {
         {selected.map((name) => {
           const p = players.find((x) => x.name === name);
           if (!p) return null;
+
           return (
             <div
               key={name}
@@ -399,6 +409,7 @@ export default function App() {
               <div>
                 {p.name} ({p.pos.join("/")}) — <b>{p.coin}</b>점
               </div>
+
               <button
                 onClick={() => toggleSelect(name)}
                 style={{
@@ -527,6 +538,7 @@ export default function App() {
           >
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <span style={{ fontWeight: "bold" }}>{p.name}</span>
+
               <input
                 type="checkbox"
                 style={{ transform: "scale(1.4)" }}
