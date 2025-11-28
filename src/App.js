@@ -1,8 +1,11 @@
+// 🔥 App.js 전체 코드 — 2025 최신 안정판
+
 import React, { useState, useEffect } from "react";
 import { db } from "./firebase";
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   setDoc,
   addDoc,
@@ -49,15 +52,26 @@ export default function App() {
   const [selected, setSelected] = useState([]);
   const [sortType, setSortType] = useState("coin-desc");
   const [filterPos, setFilterPos] = useState("ALL");
+
   const [adminMode, setAdminMode] = useState(false);
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
 
   const [teamList, setTeamList] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [maintenanceMode, setMaintenanceMode] = useState(false);
 
   const [editingCoin, setEditingCoin] = useState(null);
 
+  // 🔥 Firestore에서 공사중 모드 불러오기 + players/teams 불러오기
   useEffect(() => {
+    async function loadMaintenance() {
+      const ref = doc(db, "system", "settings");
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        const data = snap.data();
+        setMaintenanceMode(data.maintenance === true);
+      }
+    }
+
     async function loadPlayers() {
       const snap = await getDocs(collection(db, "players"));
       if (!snap.empty) {
@@ -78,10 +92,12 @@ export default function App() {
       if (!snap.empty) setTeamList(snap.docs.map((d) => d.data()));
     }
 
+    loadMaintenance();
     loadPlayers();
     loadTeams();
   }, []);
 
+  // 🔥 관리자 토글
   function toggleAdmin() {
     if (adminMode) {
       setAdminMode(false);
@@ -95,22 +111,34 @@ export default function App() {
     }
   }
 
-  async function uploadInitialPlayers() {
-    for (let p of initialPlayers) {
-      await setDoc(doc(db, "players", p.name), {
-        ...p,
-        trend: [],
-      });
-    }
-    alert("초기 데이터 업로드 완료!");
+  // 🔥 공사중 모드 토글 + Firestore 저장
+  async function toggleMaintenance() {
+    if (!adminMode) return;
+
+    const newState = !maintenanceMode;
+    setMaintenanceMode(newState);
+
+    await setDoc(doc(db, "system", "settings"), {
+      maintenance: newState,
+    });
   }
 
+  // 🔥 초기 선수 업로드
+  async function uploadInitialPlayers() {
+    for (let p of initialPlayers) {
+      await setDoc(doc(db, "players", p.name), { ...p, trend: [] });
+    }
+    alert("초기 선수 업로드 완료!");
+  }
+
+  // 🔥 선택 토글
   const toggleSelect = (name) => {
     setSelected((prev) =>
       prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]
     );
   };
 
+  // 🔥 점수 조정
   const handleCoinChange = (name, val) => {
     if (!adminMode) return;
     setEditingCoin(name);
@@ -127,7 +155,7 @@ export default function App() {
     const target = players.find((p) => p.name === name);
     if (!target) return;
 
-    const newHistory = [...(target.history || []), target.coin];
+    const newHistory = [...target.history, target.coin];
 
     await updateDoc(doc(db, "players", name), {
       coin: target.coin,
@@ -141,6 +169,7 @@ export default function App() {
     setEditingCoin(null);
   };
 
+  // 🔥 포지션 변경
   const togglePosition = (name, pos) => {
     if (!adminMode) return;
 
@@ -158,6 +187,7 @@ export default function App() {
     updateDoc(doc(db, "players", name), { pos: newPos });
   };
 
+  // 🔥 현재 선택된 점수
   const totalUsed = selected.reduce((s, n) => {
     const p = players.find((x) => x.name === n);
     return s + (p?.coin || 0);
@@ -165,19 +195,20 @@ export default function App() {
 
   const isOver = totalUsed > limit;
 
+  // 🔥 보이지 않는 손
   async function applyInvisibleHand(selectedNames) {
     const updated = players.map((p) => {
       const wasPicked = selectedNames.includes(p.name);
 
-      const newTrend = [...(p.trend || []), wasPicked ? 1 : 0];
+      const newTrend = [...p.trend, wasPicked ? 1 : 0];
       while (newTrend.length > 3) newTrend.shift();
 
-      const picksIn3 = newTrend.reduce((a, b) => a + b, 0);
+      const picks = newTrend.reduce((a, b) => a + b, 0);
 
       let delta = 0;
-      if (picksIn3 === 0) delta = -1;
-      else if (picksIn3 === 2) delta = 1;
-      else if (picksIn3 === 3) delta = 2;
+      if (picks === 0) delta = -1;
+      else if (picks === 2) delta = 1;
+      else if (picks === 3) delta = 2;
 
       let newCoin = p.coin + delta;
       if (newCoin < 0) newCoin = 0;
@@ -204,14 +235,15 @@ export default function App() {
     setPlayers(updated);
   }
 
+  // 🔥 팀 저장
   async function saveTeam() {
     if (selected.length === 0) {
-      alert("선수를 선택하세요!");
+      alert("선수 없음!");
       return;
     }
 
     if (totalUsed > limit) {
-      alert("총 사용 점수 초과! 팀 확정 불가");
+      alert("총 사용 점수 초과!");
       return;
     }
 
@@ -243,6 +275,7 @@ export default function App() {
     setSelected([]);
   }
 
+  // 🔥 정렬/필터
   let filtered =
     filterPos === "ALL"
       ? [...players]
@@ -254,10 +287,32 @@ export default function App() {
     return b.coin - a.coin;
   });
 
+  // 🔥 공사중 모드 화면 차단
+  if (maintenanceMode && !adminMode) {
+    return (
+      <div
+        style={{
+          background: "black",
+          color: "white",
+          width: "100vw",
+          height: "100vh",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          flexDirection: "column",
+          fontSize: 40,
+          fontWeight: "bold",
+        }}
+      >
+        RAON 화이팅! 🔥💪
+      </div>
+    );
+  }
+
+  // 🔥 정상 화면
   return (
     <div style={{ padding: 20, maxWidth: 750, margin: "0 auto" }}>
-
-      {/* 관리자 버튼 (공사중 모드에서도 유일하게 보임) */}
+      {/* 관리자 버튼 */}
       <button
         onClick={toggleAdmin}
         style={{
@@ -266,17 +321,16 @@ export default function App() {
           color: "white",
           borderRadius: 6,
           fontSize: 12,
-          zIndex: 99999, 
-          position: "relative",
+          marginBottom: 10,
         }}
       >
         {adminMode ? "관리자 ON" : "관리자"}
       </button>
 
-      {/* 공사중 버튼 (관리자만) */}
+      {/* 공사중 버튼 */}
       {adminMode && (
         <button
-          onClick={() => setMaintenanceMode(!maintenanceMode)}
+          onClick={toggleMaintenance}
           style={{
             marginLeft: 10,
             padding: "6px 10px",
@@ -284,40 +338,13 @@ export default function App() {
             color: "white",
             borderRadius: 6,
             fontSize: 12,
-            position:"relative",
-            zIndex:99999
           }}
         >
           {maintenanceMode ? "공사중 해제" : "공사중 모드"}
         </button>
       )}
 
-      {/* 공사중 모드 — 관리자 제외 모든 화면 덮기 */}
-      {maintenanceMode && !adminMode && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            width: "100vw",
-            height: "100vh",
-            background: "black",
-            color: "white",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            zIndex: 9999,
-            fontSize: 40,
-            fontWeight: "bold",
-            textAlign: "center",
-            flexDirection: "column",
-          }}
-        >
-          RAON 화이팅! 💪🔥
-        </div>
-      )}
-
-      <h1 style={{ fontSize: 28, fontWeight: "bold", marginBottom: 20 }}>
+      <h1 style={{ fontSize: 28, fontWeight: "bold", marginTop: 10 }}>
         RAON 드래프트 시스템
       </h1>
 
@@ -328,21 +355,25 @@ export default function App() {
             padding: 10,
             background: "orange",
             borderRadius: 8,
-            marginBottom: 20,
+            marginTop: 10,
           }}
         >
           초기 선수 업로드
         </button>
       )}
 
-      {/* 선택된 선수 */}
+      {/* 선택된 선수 - sticky */}
       <div
         style={{
           background: "white",
           padding: 16,
           borderRadius: 10,
+          marginTop: 20,
           marginBottom: 20,
           boxShadow: "0 2px 6px rgba(0,0,0,0.25)",
+          position: "sticky",
+          top: 0,
+          zIndex: 999,
         }}
       >
         <div style={{ fontSize: 18, fontWeight: "bold" }}>
@@ -356,7 +387,6 @@ export default function App() {
         {selected.map((name) => {
           const p = players.find((x) => x.name === name);
           if (!p) return null;
-
           return (
             <div
               key={name}
@@ -369,7 +399,6 @@ export default function App() {
               <div>
                 {p.name} ({p.pos.join("/")}) — <b>{p.coin}</b>점
               </div>
-
               <button
                 onClick={() => toggleSelect(name)}
                 style={{
@@ -400,7 +429,6 @@ export default function App() {
         >
           현재 점수: {totalUsed} / {limit}
           {isOver && <span style={{ marginLeft: 10 }}>(초과!)</span>}
-
           <button
             onClick={saveTeam}
             style={{
@@ -413,7 +441,6 @@ export default function App() {
           >
             팀 확정
           </button>
-
           <button
             onClick={() => setShowModal(true)}
             style={{
@@ -500,7 +527,6 @@ export default function App() {
           >
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <span style={{ fontWeight: "bold" }}>{p.name}</span>
-
               <input
                 type="checkbox"
                 style={{ transform: "scale(1.4)" }}
@@ -654,9 +680,7 @@ export default function App() {
                       border: impossible ? "1px solid red" : "none",
                     }}
                   >
-                    <div style={{ fontWeight: "bold" }}>
-                      팀명: {t.teamName}
-                    </div>
+                    <div style={{ fontWeight: "bold" }}>팀명: {t.teamName}</div>
 
                     {adminMode && (
                       <div style={{ fontSize: 12, color: "gray" }}>
@@ -675,8 +699,7 @@ export default function App() {
 
                           return (
                             <li key={i}>
-                              {tp.name}{" "}
-                              {!changed && <span>({tp.coin}점)</span>}
+                              {tp.name} {!changed && <span>({tp.coin}점)</span>}
                               {changed && (
                                 <span>
                                   ({tp.coin} → <b>{curCoin}</b>)
@@ -716,7 +739,6 @@ export default function App() {
           </div>
         </div>
       )}
-
     </div>
   );
 }
