@@ -15,6 +15,7 @@ import SelectedPlayers from "./components/SelectedPlayers";
 import PlayerList from "./components/PlayerList";
 import TeamModal from "./components/TeamModal";
 import PollPopup from "./components/PollPopup";
+import AnalyticsPanel from "./components/AnalyticsPanel";
 
 import { applyInvisibleHand } from "./utils/invisibleHand";
 import { saveTeamToDB, saveVote } from "./utils/firebaseTeam";
@@ -53,7 +54,7 @@ export default function App() {
 
   const positions = ["PG", "SG", "SF", "PF", "C"];
 
-  // STATE
+  // ---- STATE -------------------------------------------------
   const [players, setPlayers] = useState(initialPlayers);
   const [selected, setSelected] = useState([]);
   const [limit, setLimit] = useState(240);
@@ -70,12 +71,15 @@ export default function App() {
   const [activeSort, setActiveSort] = useState("time");
   const [timeSortAsc, setTimeSortAsc] = useState(false);
   const [scoreSortAsc, setScoreSortAsc] = useState(false);
-  const [winRateAsc, setWinRateAsc] = useState(false); // ✅ 승률 정렬용
+  const [winRateAsc, setWinRateAsc] = useState(false);
 
-  // ⛔ 중복 팝업 방지 — useRef 사용
+  // 🔥 분석 화면 온/오프
+  const [showAnalytics, setShowAnalytics] = useState(false);
+
+  // 투표 중복 방지
   const lastTriggeredMinuteRef = useRef(null);
 
-  // 공사중 모드 로드
+  // ---- 공사중 로드 --------------------------------------------
   useEffect(() => {
     async function loadMaintenance() {
       const ref = doc(db, "system", "settings");
@@ -94,16 +98,19 @@ export default function App() {
     await setDoc(doc(db, "system", "settings"), { maintenance: newVal });
   }
 
-  // Firestore load
+  // ---- Firestore players / teams 로드 -------------------------
   useEffect(() => {
     async function loadPlayers() {
       const snap = await getDocs(collection(db, "players"));
       if (!snap.empty) {
-        const loaded = snap.docs.map((d) => ({
-          ...d.data(),
-          history: d.data().history || [d.data().coin],
-          trend: d.data().trend || [],
-        }));
+        const loaded = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            ...data,
+            history: data.history || [data.coin],
+            trend: data.trend || [],
+          };
+        });
         setPlayers(loaded);
       }
     }
@@ -117,22 +124,25 @@ export default function App() {
     loadTeams();
   }, []);
 
-  // 관리자
+  // ---- 관리자 모드 ---------------------------------------------
   function toggleAdmin() {
-    if (adminMode) return setAdminMode(false);
+    if (adminMode) {
+      setAdminMode(false);
+      return;
+    }
     const pw = prompt("관리자 비밀번호:");
     if (pw === "150817") setAdminMode(true);
     else alert("비밀번호 오류");
   }
 
-  // 선수 선택
+  // ---- 선수 선택 ----------------------------------------------
   const toggleSelect = (name) => {
     setSelected((prev) =>
       prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]
     );
   };
 
-  // 점수 변경
+  // ---- 점수 변경 + 저장 ----------------------------------------
   const handleCoinChange = (name, val) => {
     if (!adminMode) return;
     setPlayers((prev) =>
@@ -156,7 +166,7 @@ export default function App() {
     );
   };
 
-  // 포지션 토글
+  // ---- 포지션 토글 ---------------------------------------------
   const togglePosition = (name, pos) => {
     if (!adminMode) return;
 
@@ -174,6 +184,7 @@ export default function App() {
     );
   };
 
+  // ---- 팀 현재 총점 --------------------------------------------
   function getCurrentTotal(team) {
     return team.players.reduce((sum, tp) => {
       const cur = players.find((p) => p.name === tp.name);
@@ -181,7 +192,7 @@ export default function App() {
     }, 0);
   }
 
-  // 팀 저장
+  // ---- 팀 저장 -------------------------------------------------
   async function saveTeam() {
     if (selected.length === 0) return alert("선수를 선택하세요.");
 
@@ -204,11 +215,11 @@ export default function App() {
 
     await saveTeamToDB(db, snapshotPlayers, teamName, creator);
 
-    // reload
+    // reload teams
     const snap = await getDocs(collection(db, "teams"));
     setTeamList(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
 
-    // invisible hand
+    // 보이지 않는 손
     const updated = applyInvisibleHand(players, selected);
     setPlayers(updated);
 
@@ -224,7 +235,7 @@ export default function App() {
     setSelected([]);
   }
 
-  // 선수 정렬/필터
+  // ---- 선수 정렬/필터 ------------------------------------------
   const sortedPlayers = players
     .filter((p) => (filterPos === "ALL" ? true : p.pos.includes(filterPos)))
     .sort((a, b) => {
@@ -233,7 +244,7 @@ export default function App() {
       return b.coin - a.coin;
     });
 
-  // 팀 정렬
+  // ---- 완료된 팀 정렬 ------------------------------------------
   const sortedTeamList = [...teamList].sort((a, b) => {
     if (activeSort === "time") {
       const A = a.createdAt?.seconds || 0;
@@ -259,7 +270,7 @@ export default function App() {
     return 0;
   });
 
-  // 랜덤 2팀
+  // ---- 투표용 랜덤 2팀 -----------------------------------------
   function pickTwoTeams() {
     const valid = teamList.filter((t) => (t.total || 0) <= 250);
     if (valid.length < 2) return null;
@@ -267,7 +278,7 @@ export default function App() {
     return [shuffled[0], shuffled[1]];
   }
 
-  // ⏰ 10분 단위마다 팝업
+  // ---- 10분 단위 랜덤 투표 팝업 -------------------------------
   useEffect(() => {
     if (teamList.length < 2) return;
 
@@ -275,12 +286,10 @@ export default function App() {
       const now = new Date();
       const minute = now.getMinutes();
 
-      if (poll) return; // 팝업 떠있으면 중지
+      if (poll) return; // 이미 떠있으면 스킵
 
-      // 같은 분에 중복 실행 방지
       if (lastTriggeredMinuteRef.current === minute) return;
 
-      // 00, 10, 20, 30, 40, 50
       if (minute % 10 === 0) {
         const picked = pickTwoTeams();
         if (picked) {
@@ -293,7 +302,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [teamList, poll]);
 
-  // 투표 처리
+  // ---- 투표 처리 -----------------------------------------------
   async function handleVote(winnerKey) {
     if (!poll) return;
 
@@ -313,7 +322,7 @@ export default function App() {
     setPoll(null);
   }
 
-  // 공사중 화면
+  // ---- 공사중 화면 ---------------------------------------------
   if (maintenanceMode && !adminMode) {
     return (
       <div
@@ -357,117 +366,137 @@ export default function App() {
     return s + (p?.coin || 0);
   }, 0);
 
+  // ---- 메인 렌더 -----------------------------------------------
   return (
-    <div style={{ padding: 20, maxWidth: 750, margin: "0 auto" }}>
+    <div style={{ padding: 20, maxWidth: 1000, margin: "0 auto" }}>
       <HeaderBar
         adminMode={adminMode}
         maintenance={maintenanceMode}
         onToggleAdmin={toggleAdmin}
         onToggleMaintenance={toggleMaintenance}
+        showAnalytics={showAnalytics}
+        onToggleAnalytics={() => setShowAnalytics((prev) => !prev)}
       />
 
       <h1 style={{ fontSize: 28, fontWeight: "bold", marginBottom: 20 }}>
         RAON 드래프트 시스템
       </h1>
 
-      <SelectedPlayers
-        selected={selected}
-        players={players}
-        limit={limit}
-        totalUsed={totalUsed}
-        isOver={totalUsed > limit}
-        onRemove={(name) =>
-          setSelected((prev) => prev.filter((x) => x !== name))
-        }
-        onSaveTeam={saveTeam}
-        onShowModal={() => setShowModal(true)}
-      />
-
-      {/* Limit */}
-      <div
-        style={{
-          background: "white",
-          padding: 16,
-          borderRadius: 10,
-          marginBottom: 20,
-        }}
-      >
-        총 사용 가능 점수
-        <br />
-        <input
-          type="number"
-          value={limit}
-          disabled={!adminMode}
-          onChange={(e) => setLimit(Number(e.target.value))}
-          style={{ padding: 6, width: 120, marginTop: 6, fontWeight: "bold" }}
-        />
-      </div>
-
-      {/* Sort */}
-      <div style={{ marginBottom: 20 }}>
-        <label>정렬: </label>
-        <select
-          value={sortType}
-          onChange={(e) => setSortType(e.target.value)}
-          style={{ padding: 6 }}
-        >
-          <option value="coin-desc">점수 높은순</option>
-          <option value="coin-asc">점수 낮은순</option>
-          <option value="name-asc">이름순</option>
-        </select>
-      </div>
-
-      {/* Position filter */}
-      <div style={{ marginBottom: 20 }}>
-        <label>포지션 보기: </label>
-        <select
-          value={filterPos}
-          onChange={(e) => setFilterPos(e.target.value)}
-          style={{ padding: 6 }}
-        >
-          <option value="ALL">전체</option>
-          {positions.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Player list */}
-      <PlayerList
-        players={sortedPlayers}
-        selected={selected}
-        positions={positions}
-        adminMode={adminMode}
-        onToggle={toggleSelect}
-        onCoinChange={handleCoinChange}
-        onCoinSave={saveCoinUpdate}
-        onTogglePosition={togglePosition}
-      />
-
-      {/* Completed Teams */}
-      {showModal && (
-        <TeamModal
-          visible={showModal}
-          onClose={() => setShowModal(false)}
-          teams={sortedTeamList}
+      {showAnalytics ? (
+        // 🔍 분석 모드
+        <AnalyticsPanel
           players={players}
-          limit={limit}
-          adminMode={adminMode}
-          activeSort={activeSort}
-          setActiveSort={setActiveSort}
-          timeSortAsc={timeSortAsc}
-          setTimeSortAsc={setTimeSortAsc}
-          scoreSortAsc={scoreSortAsc}
-          setScoreSortAsc={setScoreSortAsc}
-          winRateAsc={winRateAsc}
-          setWinRateAsc={setWinRateAsc}
-          getCurrentTotal={getCurrentTotal}
+          teams={teamList}
+          onBack={() => setShowAnalytics(false)}
         />
+      ) : (
+        // 🏀 드래프트 메인 화면
+        <>
+          <SelectedPlayers
+            selected={selected}
+            players={players}
+            limit={limit}
+            totalUsed={totalUsed}
+            isOver={totalUsed > limit}
+            onRemove={(name) =>
+              setSelected((prev) => prev.filter((x) => x !== name))
+            }
+            onSaveTeam={saveTeam}
+            onShowModal={() => setShowModal(true)}
+          />
+
+          {/* Limit 설정 */}
+          <div
+            style={{
+              background: "white",
+              padding: 16,
+              borderRadius: 10,
+              marginBottom: 20,
+            }}
+          >
+            총 사용 가능 점수
+            <br />
+            <input
+              type="number"
+              value={limit}
+              disabled={!adminMode}
+              onChange={(e) => setLimit(Number(e.target.value))}
+              style={{
+                padding: 6,
+                width: 120,
+                marginTop: 6,
+                fontWeight: "bold",
+              }}
+            />
+          </div>
+
+          {/* 정렬 */}
+          <div style={{ marginBottom: 20 }}>
+            <label>정렬: </label>
+            <select
+              value={sortType}
+              onChange={(e) => setSortType(e.target.value)}
+              style={{ padding: 6 }}
+            >
+              <option value="coin-desc">점수 높은순</option>
+              <option value="coin-asc">점수 낮은순</option>
+              <option value="name-asc">이름순</option>
+            </select>
+          </div>
+
+          {/* 포지션 필터 */}
+          <div style={{ marginBottom: 20 }}>
+            <label>포지션 보기: </label>
+            <select
+              value={filterPos}
+              onChange={(e) => setFilterPos(e.target.value)}
+              style={{ padding: 6 }}
+            >
+              <option value="ALL">전체</option>
+              {positions.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* 선수 리스트 */}
+          <PlayerList
+            players={sortedPlayers}
+            selected={selected}
+            positions={positions}
+            adminMode={adminMode}
+            onToggle={toggleSelect}
+            onCoinChange={handleCoinChange}
+            onCoinSave={saveCoinUpdate}
+            onTogglePosition={togglePosition}
+          />
+
+          {/* 완료된 팀 모달 */}
+          {!showAnalytics && showModal && (
+            <TeamModal
+              visible={showModal}
+              onClose={() => setShowModal(false)}
+              teams={sortedTeamList}
+              players={players}
+              limit={limit}
+              adminMode={adminMode}
+              activeSort={activeSort}
+              setActiveSort={setActiveSort}
+              timeSortAsc={timeSortAsc}
+              setTimeSortAsc={setTimeSortAsc}
+              scoreSortAsc={scoreSortAsc}
+              setScoreSortAsc={setScoreSortAsc}
+              winRateAsc={winRateAsc}
+              setWinRateAsc={setWinRateAsc}
+              getCurrentTotal={getCurrentTotal}
+            />
+          )}
+        </>
       )}
 
-      {/* Poll popup */}
+      {/* 랜덤 투표 팝업 (어떤 화면이든 위에 뜨게 유지) */}
       <PollPopup
         poll={poll}
         onVote={handleVote}

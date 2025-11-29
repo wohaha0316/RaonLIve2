@@ -5,10 +5,13 @@
   "keywords": [],
   "main": "src/index.tsx",
   "dependencies": {
+    "chart.js": "^4.5.1",
+    "firebase": "12.6.0",
     "react": "^19.0.0",
+    "react-chartjs-2": "^5.3.1",
     "react-dom": "^19.0.0",
-    "react-scripts": "^5.0.0",
-    "firebase": "12.6.0"
+    "react-scripts": "^5.0.1",
+    "recharts": "^3.5.1"
   },
   "devDependencies": {
     "@types/react": "19.0.0",
@@ -22,5 +25,10 @@
     "test": "react-scripts test --env=jsdom",
     "eject": "react-scripts eject"
   },
-  "browserslist": [">0.2%", "not dead", "not ie <= 11", "not op_mini all"]
+  "browserslist": [
+    ">0.2%",
+    "not dead",
+    "not ie <= 11",
+    "not op_mini all"
+  ]
 }

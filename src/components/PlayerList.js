@@ -1,3 +1,4 @@
+// src/components/PlayerList.js
 import React from "react";
 import PlayerCard from "./PlayerCard";
 
@@ -23,10 +24,10 @@ export default function PlayerList({
         <PlayerCard
           key={p.name}
           player={p}
-          selected={selected.includes(p.name)}
-          positions={positions}
+          isSelected={selected.includes(p.name)}
           adminMode={adminMode}
-          onToggle={() => onToggle(p.name)}
+          positions={positions}
+          onToggle={onToggle}
           onCoinChange={onCoinChange}
           onCoinSave={onCoinSave}
           onTogglePosition={onTogglePosition}
